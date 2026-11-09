@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Complex Grid, as interpreted by Claude | Emergent Urbanism</title>
+<meta name="description" content="An interactive simulation of the complex grid growth procedure from Emergent Urbanism (2009), as implemented by Claude.">
+<style>
+  :root { --ink: #1a1a1a; --muted: #6b665c; --rule: #d8d3c6; --code: #f4f1ea; }
+  body { font: 17px/1.6 Georgia, "Times New Roman", serif; color: var(--ink); background: #fff; margin: 0; padding: 32px 16px 64px; }
+  main { max-width: 680px; margin: 0 auto; }
+  .kicker { font-size: 14px; color: var(--muted); margin: 0 0 4px; }
+  .kicker a { color: inherit; }
+  h1 { font-weight: normal; font-size: 2em; line-height: 1.2; margin: 0 0 .4em; }
+  h2 { font-weight: normal; font-size: 1.35em; margin: 2em 0 .5em; border-top: 1px solid var(--rule); padding-top: 1em; }
+  a { color: #7a4a12; }
+  .lede { font-size: 1.1em; }
+  li { margin-bottom: .4em; }
+  code, pre { font: 13px/1.5 Menlo, Consolas, monospace; background: var(--code); }
+  pre { padding: 10px 12px; overflow-x: auto; }
+  code { padding: 1px 4px; }
+  table { border-collapse: collapse; font-size: 15px; }
+  td { padding: 4px 14px 4px 0; vertical-align: top; border-bottom: 1px solid #eee; }
+  td:first-child { white-space: nowrap; }
+  footer { margin-top: 3em; font-size: 14px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 1em; }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker"><a href="../../index.html">Emergent Urbanism</a></p>
+  <h1>The Complex Grid, as interpreted by Claude</h1>
+  <p class="lede">A live simulation of the growth procedure described in
+    <a href="../../2009/02/16/the-complex-grid/index.html">The complex grid</a> (2009).
+    Press <i>New city</i> to grow another one; every seed grows a different town from the same two rules.</p>
+
+  <div class="complex-grid" data-seed="2009"></div>
+
+  <h2>The two rules</h2>
+  <ul>
+    <li><b>Private development.</b> You may build on any available part of the network so long as you replace the part you used up by extending the network around your new block. Each block, its size drawn from the Fibonacci sequence, goes where it adds the fewest new street segments.</li>
+    <li><b>Community development.</b> Any time a part of the network becomes too complicated (it takes more than a few steps to get out of a sector), extend the boundary of that part with a higher capacity road.</li>
+  </ul>
+
+  <h2>How Claude interpreted them</h2>
+  <ul>
+    <li><b>The grid stays gridlike at every scale.</b> Blocks grow as one compact cluster. When it becomes too complicated, a boulevard is built around its bounding rectangle, and that sector then counts as a single block at the next scale up. There the same two rules produce ring roads, and then parkways.</li>
+    <li><b>Every road is a rectangle and every road connects.</b> No road cuts through a block, sectors are either nested or side by side, and the roads of each level form one connected network.</li>
+    <li><b>Streets must not grow too long without interruption.</b> A block may not stretch a growing cluster into a long strip, so sectors stay roughly square.</li>
+    <li><b>Open space.</b> Land inside a ring that no one has built on stays open, shown in green.</li>
+    <li><b>Scale.</b> By default a sector is ringed when a block is more than 3 steps from getting out, and a ring road forms once one neighbourhood is surrounded by others. That reproduces the proportions of the 2009 drawings: the village is ringed after about 45 blocks, sectors hold about 20, and the first ring road forms at about 150. The essay's example of 4 steps gives larger sectors, with the ring road at about 280 blocks. Change <i>Max steps</i> above to compare.</li>
+  </ul>
+
+  <h2>Embedding</h2>
+<pre>&lt;div class="complex-grid" data-seed="2009"&gt;&lt;/div&gt;
+&lt;script src="/complex-grid/complex-grid.js"&gt;&lt;/script&gt;</pre>
+  <table>
+    <tr><td><code>data-seed</code></td><td>Random seed; the same seed always grows the same city. Default: random.</td></tr>
+    <tr><td><code>data-blocks</code></td><td>Number of blocks to grow. Default: 200.</td></tr>
+    <tr><td><code>data-steps</code></td><td>Steps allowed to get out of a sector before it is ringed by a higher road. Lower values make smaller sectors and bring the ring road sooner (2: about 80 blocks, 3: about 150, 4: about 280). Default: 3.</td></tr>
+    <tr><td><code>data-speed</code></td><td>Milliseconds between blocks. Default: 100.</td></tr>
+    <tr><td><code>data-autoplay</code></td><td><code>false</code> shows the finished city instead of animating it. Default: true.</td></tr>
+    <tr><td><code>data-controls</code></td><td><code>false</code> hides the buttons and legend. Default: true.</td></tr>
+  </table>
+
+  <footer>
+    Simulation written by Claude (Anthropic) from the procedure in Mathieu Helie's 2009 essay.
+    The source is a single dependency-free file: <a href="../complex-grid.js">complex-grid.js</a>.
+  </footer>
+</main>
+<script src="../complex-grid.js"></script>
+</body>
+</html>
