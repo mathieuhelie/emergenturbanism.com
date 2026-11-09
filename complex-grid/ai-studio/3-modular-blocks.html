@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Complex Grid: Modular Blocks v71</title>
+    <style>
+        :root { --bg: #050508; --ui: #111115; --accent: #00ffff; --text: #eee; }
+        body.light-mode { --bg: #ffffff; --ui: #f0f0f5; --text: #222; }
+
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; transition: background 0.2s; touch-action: none; }
+        
+        #controls { background: var(--ui); padding: 10px 20px; border-bottom: 1px solid #333; display: flex; gap: 15px; align-items: center; z-index: 100; flex-wrap: wrap; }
+        #tabs { display: flex; background: #000; padding: 2px; border-radius: 4px; margin-left: auto; border: 1px solid #333; }
+        .tab-btn { padding: 6px 15px; font-size: 10px; text-transform: uppercase; color: #555; border: none; background: none; cursor: pointer; font-family: inherit; }
+        .tab-btn.active { background: #222; color: var(--accent); font-weight: bold; }
+        
+        .slider-wrap { display: flex; flex-direction: column; min-width: 130px; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: var(--accent); }
+        .toggle-wrap { display: flex; align-items: center; gap: 5px; font-size: 10px; text-transform: uppercase; cursor: pointer; }
+        input[type=checkbox] { cursor: pointer; width: 14px; height: 14px; accent-color: var(--accent); }
+
+        #view-stack { flex-grow: 1; position: relative; overflow: hidden; }
+        .view-pane { position: absolute; inset: 0; display: none; background: var(--bg); }
+        .view-pane.active { display: block; }
+
+        #svg-container { width: 100%; height: 100%; cursor: grab; }
+        #svg-container:active { cursor: grabbing; }
+        svg { width: 100%; height: 100%; display: block; pointer-events: none; }
+        
+        #tree-container { padding: 40px; overflow-y: auto; height: 100%; box-sizing: border-box; font-size: 12px; line-height: 1.6; }
+        details { margin-left: 18px; border-left: 1px solid #444; padding-left: 10px; }
+        summary { cursor: pointer; color: var(--accent); outline: none; padding: 2px 0; }
+        
+        button { background: #1a1a20; color: #fff; border: 1px solid #333; padding: 5px 12px; cursor: pointer; border-radius: 3px; font-size: 10px; font-family: inherit; }
+        .label { font-weight: bold; color: var(--accent); font-size: 11px; min-width: 35px; }
+        .hint { font-size: 8px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <div class="group">
+        <div class="slider-wrap"><span class="hint">Chronology</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <input type="range" id="stepSlider" min="0" max="1000" value="200"><span class="label" id="stepVal">0</span>
+            </div>
+        </div>
+    </div>
+    <div class="group">
+        <div class="slider-wrap"><span class="hint">Grain</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <input type="range" id="grainSlider" min="3" max="21" value="10" step="1"><span class="label" id="grainVal">10</span>
+            </div>
+        </div>
+    </div>
+    <div class="group">
+        <input type="text" id="seed" value="modular" style="width:60px; background:#000; color:#fff; border:1px solid #333; font-size:10px; padding:3px;">
+        <input type="color" id="colorPicker" value="#1a5fb4">
+    </div>
+    <div class="group">
+        <label class="toggle-wrap"><input type="checkbox" id="lightMode"> Light</label>
+        <label class="toggle-wrap"><input type="checkbox" id="ghostMode"> Ghost</label>
+        <label class="toggle-wrap"><input type="checkbox" id="modeToggle" checked> Alt</label>
+        <button id="cam-reset" style="margin-left:10px">Recenter</button>
+    </div>
+    <div id="tabs">
+        <button class="tab-btn active" data-view="svg">Visual</button>
+        <button class="tab-btn" data-view="tree">Grammar</button>
+    </div>
+</div>
+
+<div id="view-stack">
+    <div id="svg-pane" class="view-pane active">
+        <div id="svg-container">
+            <svg id="citySvg" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+    </div>
+    <div id="tree-pane" class="view-pane">
+        <div id="tree-container"></div>
+    </div>
+</div>
+
+<script>
+/** 1. THE MODULAR ENGINE **/
+const INFRA_UNIT = 1.2; 
+
+function createRNG(s) {
+    let h = 0; for(let i=0; i<s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    let state = h |= 0;
+    return function() {
+        let t = state += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+
+class CityNode {
+    constructor(x, y, w, h, wave, depth, type) {
+        this.x = x; this.y = y; this.w = w; this.h = h;
+        this.wave = wave; this.depth = depth; this.type = type;
+        this.children = [];
+        this.isTerminal = false;
+
+        const u = INFRA_UNIT;
+        this.loops = [
+            { x: x, y: y, w: w, h: u },
+            { x: x, y: y + h - u, w: w, h: u },
+            { x: x, y: y + u, w: u, h: h - 2*u },
+            { x: x + w - u, y: y + u, w: u, h: h - 2*u }
+        ];
+        this.core = { x: x + u, y: y + u, w: w - 2*u, h: h - 2*u };
+    }
+}
+
+class ComplexGrid {
+    constructor(seed, grain) {
+        this.rng = createRNG(seed);
+        this.grain = grain;
+        this.minUnit = 12;
+        this.allNodes = []; 
+        this.metabolismStack = [];
+        this.waveCount = 0;
+        
+        const sz = 40;
+        this.plan = { x1: -sz/2, y1: -sz/2, x2: sz/2, y2: sz/2 };
+        const seedNode = new CityNode(-sz/2, -sz/2, sz, sz, 0, 0, 'Origin');
+        seedNode.isTerminal = true;
+        this.allNodes.push(seedNode);
+    }
+
+    getDist(r) { return (r.x + r.w/2)**2 + (r.y + r.h/2)**2; }
+
+    step() {
+        if (this.metabolismStack.length > 0) {
+            let parent = this.metabolismStack.pop();
+            let c = parent.core;
+            const stopProb = 1 / (1 + this.grain);
+            const isMonolith = parent.depth > 0 && this.rng() < stopProb;
+
+            if (!isMonolith && (c.w > this.minUnit * 1.5 || c.h > this.minUnit * 1.5)) {
+                // Strict 50/50 split for blockiness
+                let split = 0.5;
+                let c1, c2, d = parent.depth + 1;
+                
+                if (c.w >= c.h) {
+                    c1 = new CityNode(c.x, c.y, c.w * split, c.h, parent.wave, d, 'Subdiv');
+                    c2 = new CityNode(c.x + c.w * split, c.y, c.w * (1-split), c.h, parent.wave, d, 'Subdiv');
+                } else {
+                    c1 = new CityNode(c.x, c.y, c.w, c.h * split, parent.wave, d, 'Subdiv');
+                    c2 = new CityNode(c.x, c.y + c.h * split, c.w, c.h * (1-split), parent.wave, d, 'Subdiv');
+                }
+                parent.children.push(c1, c2);
+                this.allNodes.push(c1, c2);
+                if (this.getDist(c1) > this.getDist(c2)) { this.metabolismStack.push(c1, c2); }
+                else { this.metabolismStack.push(c2, c1); }
+            } else { parent.isTerminal = true; }
+            return;
+        }
+
+        // BLOCKY EXPANSION RULE:
+        // New slab depth is either 1.0x or 2.0x the side length.
+        this.waveCount++;
+        let p = this.plan, w = p.x2 - p.x1, h = p.y2 - p.y1;
+        let side = (w >= h) ? (this.rng() > 0.5 ? 'T' : 'B') : (this.rng() > 0.5 ? 'L' : 'R');
+        
+        let ratio = this.rng() > 0.5 ? 1.0 : 2.0;
+        let slab;
+
+        if (side === 'L' || side === 'R') {
+            let pr = h * ratio;
+            slab = new CityNode(side === 'L' ? p.x1 - pr : p.x2, p.y1, pr, h, this.waveCount, 0, 'Annex');
+            if (side === 'L') p.x1 -= pr; else p.x2 += pr;
+        } else {
+            let pr = w * ratio;
+            slab = new CityNode(p.x1, side === 'T' ? p.y1 - pr : p.y2, w, pr, this.waveCount, 0, 'Annex');
+            if (side === 'T') p.y1 -= pr; else p.y2 += pr;
+        }
+        this.allNodes.push(slab);
+        this.metabolismStack.push(slab);
+    }
+    generate(n) { for(let i=0; i<n; i++) this.step(); }
+}
+
+/** 2. RENDERERS **/
+const svg = document.getElementById('citySvg'), slider = document.getElementById('stepSlider');
+const treeCont = document.getElementById('tree-container'), sc = document.getElementById('svg-container');
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return {r, g, b};
+}
+
+function getLoopColor(wave, depth, frontierHex, isAlt) {
+    const sIdx = Math.max(0, wave - depth);
+    if (sIdx === 0) return "#ffffff";
+    const YEL = {r: 245, g: 194, b: 17}, FRON = hexToRgb(frontierHex);
+    if (isAlt) return sIdx % 2 !== 0 ? `rgb(${YEL.r},${YEL.g},${YEL.b})` : `rgb(${FRON.r},${FRON.g},${FRON.b})`;
+    let t = Math.min(1, sIdx / 6);
+    return `rgb(${Math.round(YEL.r+(FRON.r-YEL.r)*t)},${Math.round(YEL.g+(FRON.g-YEL.g)*t)},${Math.round(YEL.b+(FRON.b-YEL.b)*t)})`;
+}
+
+function renderTree(node, container) {
+    if (node.isTerminal) {
+        const div = document.createElement('div');
+        div.className = 'tree-leaf';
+        div.innerHTML = `<strong>Terminal Block</strong> <span class="tree-dim">${node.w.toFixed(0)}x${node.h.toFixed(0)}m</span>`;
+        container.appendChild(div); return;
+    }
+    const det = document.createElement('details');
+    const sum = document.createElement('summary');
+    sum.innerHTML = `[${node.type}] Wave:${node.wave} <span class="tree-dim">${node.w.toFixed(0)}x${node.h.toFixed(0)}m</span>`;
+    det.appendChild(sum);
+    node.children.forEach(c => renderTree(c, det));
+    container.appendChild(det);
+}
+
+function render() {
+    const isL = document.getElementById('lightMode').checked, isG = document.getElementById('ghostMode').checked;
+    document.body.classList.toggle('light-mode', isL);
+    const contrast = isL ? "#000" : "#fff";
+    
+    const steps = Math.floor(6000 * Math.pow(parseInt(slider.value) / 1000, 2.5));
+    document.getElementById('stepVal').innerText = steps;
+    const grain = parseFloat(document.getElementById('grainSlider').value);
+    document.getElementById('grainVal').innerText = grain;
+    
+    const engine = new ComplexGrid(document.getElementById('seed').value, grain);
+    engine.generate(steps);
+
+    treeCont.innerHTML = '<h2>Grammar Trace (1:1 / 1:2 Logic)</h2>';
+    engine.allNodes.filter(n => n.depth === 0).forEach(n => treeCont.appendChild(renderTree(n, treeCont) || document.createTextNode('')));
+
+    const p = engine.plan;
+    const maxR = Math.max(Math.abs(p.x1), Math.abs(p.x2), Math.abs(p.y1), Math.abs(p.y2));
+    const size = (maxR * 2.2) || 100;
+    svg.setAttribute('viewBox', `${-size/2} ${-size/2} ${size} ${size}`);
+    svg.innerHTML = '';
+    
+    const frag = document.createDocumentFragment();
+    const frontier = document.getElementById('colorPicker').value, isAlt = document.getElementById('modeToggle').checked;
+
+    engine.allNodes.forEach(node => {
+        const color = getLoopColor(node.wave, node.depth, frontier, isAlt);
+        node.loops.forEach(r => {
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute('x', r.x); rect.setAttribute('y', r.y);
+            rect.setAttribute('width', r.w); rect.setAttribute('height', r.h);
+            rect.setAttribute('fill', color);
+            frag.appendChild(rect);
+        });
+        if (node.isTerminal && !isG) {
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute('x', node.core.x); rect.setAttribute('y', node.core.y);
+            rect.setAttribute('width', node.core.w); rect.setAttribute('height', node.core.h);
+            rect.setAttribute('fill', contrast);
+            frag.appendChild(rect);
+        }
+    });
+    svg.appendChild(frag);
+}
+
+/** 3. INTERACTION **/
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.tab-btn, .view-pane').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.getAttribute('data-view') + '-pane').classList.add('active');
+    };
+});
+
+let isD = false, lp = {x:0, y:0};
+sc.onpointerdown = e => { isD = true; lp = {x:e.clientX, y:e.clientY}; };
+window.onpointermove = e => {
+    if (!isD) return;
+    const vb = svg.viewBox.baseVal;
+    const s = vb.width / sc.clientWidth;
+    vb.x -= (e.clientX - lp.x) * s; vb.y -= (e.clientY - lp.y) * s;
+    lp = {x:e.clientX, y:e.clientY};
+};
+window.onpointerup = () => isD = false;
+document.getElementById('cam-reset').onclick = render;
+document.querySelectorAll('input').forEach(i => i.oninput = render);
+window.onresize = render; render();
+</script>
+</body>
+</html>

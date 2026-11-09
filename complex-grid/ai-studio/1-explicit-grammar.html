@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Complex Grid: Explicit Grammar</title>
+    <style>
+        :root { --bg: #888; --ui: #222; --land: #fff; --road: #000; --text: #eee; }
+        body.reverse-mode { --land: #000; --road: #fff; }
+
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; touch-action: none; }
+        
+        #controls { background: var(--ui); padding: 10px 20px; border-bottom: 2px solid #000; display: flex; gap: 20px; align-items: center; z-index: 100; }
+        #tabs { display: flex; background: #000; padding: 2px; border-radius: 4px; margin-left: auto; }
+        .tab-btn { padding: 6px 15px; font-size: 11px; text-transform: uppercase; color: #666; border: none; background: none; cursor: pointer; }
+        .tab-btn.active { background: #333; color: #0ff; font-weight: bold; }
+        
+        .slider-wrap { display: flex; flex-direction: column; min-width: 150px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        
+        #view-stack { flex-grow: 1; position: relative; }
+        .view-pane { position: absolute; inset: 0; display: none; overflow: auto; }
+        .view-pane.active { display: block; }
+
+        svg { width: 100%; height: 100%; display: block; }
+
+        /* GRAMMAR TREE STYLES */
+        #tree-container { padding: 40px; background: #111; color: #aaa; font-size: 12px; }
+        details { margin-left: 18px; border-left: 1px solid #333; padding-left: 8px; margin-top: 2px; }
+        summary { cursor: pointer; padding: 2px 0; outline: none; color: #0ff; }
+        .tree-infra { color: #f88; font-style: italic; } /* Infrastructure components */
+        .tree-built { color: #fff; font-weight: bold; }  /* Terminal lots */
+        .dim { color: #555; font-size: 10px; margin-left: 8px; }
+
+        button { background: #333; color: #fff; border: 1px solid #555; padding: 4px 10px; cursor: pointer; border-radius: 3px; font-size: 10px; }
+        button:hover { background: #444; border-color: #0ff; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <div class="slider-wrap">
+        <span style="font-size: 9px; color: #777;">CHRONOLOGY</span>
+        <input type="range" id="stepSlider" min="0" max="1000" value="100">
+        <span id="stepVal" style="font-size: 11px; color: #0ff;">0</span>
+    </div>
+
+    <div style="display:flex; gap:15px; align-items:center;">
+        <input type="text" id="seed" value="grammar-test" style="width:70px; background:#000; color:#fff; border:1px solid #555; padding:3px;">
+        <button id="toggleReverse">Flip Black/White</button>
+        <button id="resetCam">Reset View</button>
+    </div>
+
+    <div id="tabs">
+        <button class="tab-btn active" data-view="svg">Visual</button>
+        <button class="tab-btn" data-view="tree">Grammar</button>
+    </div>
+</div>
+
+<div id="view-stack">
+    <div id="svg-pane" class="view-pane active">
+        <svg id="citySvg" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div id="tree-pane" class="view-pane">
+        <div id="tree-container"></div>
+    </div>
+</div>
+
+<script>
+/** 
+ * 1. DATA STRUCTURE: THE CITY NODE
+ * A Node represents a "Sovereign Parcel" containing its own streets and land.
+ */
+class CityNode {
+    constructor(x, y, w, h, depth, wave, type) {
+        this.x = x; this.y = y; this.w = w; this.h = h;
+        this.depth = depth;
+        this.wave = wave;
+        this.type = type; // 'Expansion', 'Subdivision', 'Terminal'
+        
+        this.infrastructure = []; // List of Edge and Corner rectangles
+        this.interior = null;     // The "Core" area left after carving streets
+        this.children = [];       // Sub-nodes if not terminal
+        
+        this.calculateInfrastructure();
+    }
+
+    calculateInfrastructure() {
+        // Human Scale Road Widths (Fixed units)
+        const rankWidths = [4.0, 2.5, 1.2, 0.6, 0.3, 0.1];
+        const rw = rankWidths[Math.min(this.depth, rankWidths.length - 1)];
+        const half = rw / 2; // Every block provides half the road width
+
+        // Define the 4 Edges (North, South, East, West)
+        this.infrastructure.push({ id: 'N-Edge', x: this.x + half, y: this.y, w: this.w - rw, h: half });
+        this.infrastructure.push({ id: 'S-Edge', x: this.x + half, y: this.y + this.h - half, w: this.w - rw, h: half });
+        this.infrastructure.push({ id: 'W-Edge', x: this.x, y: this.y + half, w: half, h: this.h - rw });
+        this.infrastructure.push({ id: 'E-Edge', x: this.x + this.w - half, y: this.y + half, w: half, h: this.h - rw });
+
+        // Define the 4 Corners
+        this.infrastructure.push({ id: 'NW-Corner', x: this.x, y: this.y, w: half, h: half });
+        this.infrastructure.push({ id: 'NE-Corner', x: this.x + this.w - half, y: this.y, w: half, h: half });
+        this.infrastructure.push({ id: 'SW-Corner', x: this.x, y: this.y + this.h - half, w: half, h: half });
+        this.infrastructure.push({ id: 'SE-Corner', x: this.x + this.w - half, y: this.y + this.h - half, w: half, h: half });
+
+        // The remaining area is the developable Core
+        this.interior = { x: this.x + half, y: this.y + half, w: this.w - rw, h: this.h - rw };
+    }
+}
+
+/**
+ * 2. THE ENGINE
+ */
+function createRNG(s) {
+    let h = 0; for(let i=0; i<s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    let state = h |= 0;
+    return function() {
+        let t = state += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+
+class ComplexEngine {
+    constructor(seed) {
+        this.rng = createRNG(seed);
+        const sz = 32;
+        this.rootNode = new CityNode(-sz/2, -sz/2, sz, sz, 0, 0, 'Origin');
+        this.stack = []; // For subdivision
+        this.allNodes = [this.rootNode];
+        this.waveCount = 0;
+        this.plan = { x1: -sz/2, y1: -sz/2, x2: sz/2, y2: sz/2 };
+    }
+
+    step() {
+        if (this.stack.length > 0) {
+            let parent = this.stack.pop();
+            let area = parent.interior;
+
+            // Only split if above 15 units
+            if (area.w > 15 || area.h > 15) {
+                let split = 0.45 + this.rng() * 0.1;
+                let c1, c2;
+                if (area.w >= area.h) {
+                    c1 = new CityNode(area.x, area.y, area.w * split, area.h, parent.depth + 1, parent.wave, 'Subdivision');
+                    c2 = new CityNode(area.x + area.w * split, area.y, area.w * (1 - split), area.h, parent.depth + 1, parent.wave, 'Subdivision');
+                } else {
+                    c1 = new CityNode(area.x, area.y, area.w, area.h * split, parent.depth + 1, parent.wave, 'Subdivision');
+                    c2 = new CityNode(area.x, area.y + area.h * split, area.w, area.h * (1 - split), parent.depth + 1, parent.wave, 'Subdivision');
+                }
+                parent.children.push(c1, c2);
+                this.allNodes.push(c1, c2);
+                // Proximity sort
+                if ((c1.x**2 + c1.y**2) > (c2.x**2 + c2.y**2)) { this.stack.push(c1, c2); } 
+                else { this.stack.push(c2, c1); }
+            } else {
+                parent.type = 'Terminal Lot';
+            }
+            return;
+        }
+
+        // Expansion
+        this.waveCount++;
+        let w = this.plan.x2 - this.plan.x1, h = this.plan.y2 - this.plan.y1;
+        let side = (w >= h) ? (this.rng() > 0.5 ? 'T' : 'B') : (this.rng() > 0.5 ? 'L' : 'R');
+        let slab, phi = 0.618;
+        if (side === 'L' || side === 'R') {
+            let pr = h * phi;
+            slab = new CityNode(side === 'L' ? this.plan.x1 - pr : this.plan.x2, this.plan.y1, pr, h, 1, this.waveCount, 'Annexation');
+            if (side === 'L') this.plan.x1 -= pr; else this.plan.x2 += pr;
+        } else {
+            let pr = w * phi;
+            slab = new CityNode(this.plan.x1, side === 'T' ? this.plan.y1 - pr : this.plan.y2, w, pr, 1, this.waveCount, 'Annexation');
+            if (side === 'T') this.plan.y1 -= pr; else this.plan.y2 += pr;
+        }
+        this.allNodes.push(slab);
+        this.stack.push(slab);
+    }
+
+    generate(n) { for(let i=0; i<n; i++) this.step(); }
+}
+
+/**
+ * 3. RENDERERS
+ */
+const svg = document.getElementById('citySvg'), slider = document.getElementById('stepSlider');
+const treeCont = document.getElementById('tree-container');
+
+function buildTreeHTML(node) {
+    const isLeaf = node.children.length === 0;
+    const el = document.createElement('details');
+    const sum = document.createElement('summary');
+    sum.innerHTML = `[${node.type}] Wave ${node.wave} <span class="dim">${node.w.toFixed(1)}x${node.h.toFixed(1)}m (Nest: ${node.depth})</span>`;
+    el.appendChild(sum);
+
+    // List Infrastructure Explicitly
+    const infraList = document.createElement('div');
+    infraList.style.paddingLeft = "20px";
+    node.infrastructure.forEach(inf => {
+        infraList.innerHTML += `<div class="tree-infra">• ${inf.id} <span class="dim">${inf.w.toFixed(2)}m wide</span></div>`;
+    });
+    el.appendChild(infraList);
+
+    if (isLeaf) {
+        const built = document.createElement('div');
+        built.className = 'tree-built';
+        built.style.paddingLeft = "20px";
+        built.innerText = "↳ Interior Core: Settled Land";
+        el.appendChild(built);
+    } else {
+        node.children.forEach(c => el.appendChild(buildTreeHTML(c)));
+    }
+    return el;
+}
+
+function render() {
+    const steps = Math.floor(4000 * Math.pow(slider.value / 1000, 2.5));
+    document.getElementById('stepVal').innerText = steps;
+    const engine = new ComplexEngine(document.getElementById('seed').value);
+    engine.generate(steps);
+
+    // Tree View
+    treeCont.innerHTML = '<h2>Urban Grammar Tree</h2>';
+    engine.allNodes.filter(n => n.type === 'Origin' || n.type === 'Annexation').forEach(rootAnnex => {
+        treeCont.appendChild(buildTreeHTML(rootAnnex));
+    });
+
+    // SVG View
+    const p = engine.plan;
+    const maxR = Math.max(Math.abs(p.x1), Math.abs(p.x2), Math.abs(p.y1), Math.abs(p.y2));
+    const size = maxR * 2.2;
+    svg.setAttribute('viewBox', `${-size/2} ${-size/2} ${size} ${size}`);
+    svg.innerHTML = '';
+    const frag = document.createDocumentFragment();
+
+    engine.allNodes.forEach(node => {
+        // Draw Infrastructure (Roads/Corners)
+        node.infrastructure.forEach(inf => {
+            const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            r.setAttribute('x', inf.x); r.setAttribute('y', inf.y);
+            r.setAttribute('width', inf.w); r.setAttribute('height', inf.h);
+            r.setAttribute('fill', 'var(--road)');
+            frag.appendChild(r);
+        });
+        // Draw Core if terminal
+        if (node.children.length === 0) {
+            const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            r.setAttribute('x', node.interior.x); r.setAttribute('y', node.interior.y);
+            r.setAttribute('width', node.interior.w); r.setAttribute('height', node.interior.h);
+            r.setAttribute('fill', 'var(--land)');
+            frag.appendChild(r);
+        }
+    });
+    svg.appendChild(frag);
+}
+
+// Interaction
+document.getElementById('toggleReverse').onclick = () => document.body.classList.toggle('reverse-mode');
+document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tab-btn, .view-pane').forEach(el => el.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById(b.dataset.view + '-pane').classList.add('active');
+});
+document.querySelectorAll('input').forEach(i => i.oninput = render);
+render();
+</script>
+</body>
+</html>
